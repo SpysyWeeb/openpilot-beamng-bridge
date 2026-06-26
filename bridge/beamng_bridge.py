@@ -1,6 +1,9 @@
 import functools
+import os
 import time
 import numpy as np
+
+ENGAGED_FILE = '/tmp/beamng_bridge_engaged'
 
 from multiprocessing import Queue
 
@@ -32,8 +35,14 @@ class BeamNGBridge(SimulatorBridge):
     def spawn_world(self, q: Queue) -> World:
         return BeamNGWorld(q, dual_camera=self.dual_camera)
 
+    def _run_with_world(self, q: Queue):
+        """Like _run() but uses self.world as already set (no spawn_world call).
+        Use this on Linux where beamngpy sockets can't survive a subprocess fork."""
+        self._run(q)
+
     def _run(self, q: Queue):
-        self.world = self.spawn_world(q)
+        if self.world is None:
+            self.world = self.spawn_world(q)
 
         self.simulated_car = SimulatedCar()
         self.simulated_sensors = SimulatedSensors(self.dual_camera)
@@ -67,9 +76,16 @@ class BeamNGBridge(SimulatorBridge):
         for _ in range(20):
             self.world.tick()
 
+        # Pre-populate simulator_state with real sensor data so the first
+        # send_imu_message() doesn't emit zeros (which triggers sensorDataInvalid).
+        self.world.read_sensors(self.simulator_state)
+
         # Local state — kept here rather than on self so common.py stays unmodified.
-        post_engage_cnt = 0
-        pending_reengage = False
+        pending_reengage   = False
+        _last_watchdog     = time.monotonic()
+        _driver_mode       = False   # Option B: stop sending controls, let player drive in BeamNG
+        _pending_spd_presses = 0     # remaining cruise button presses for cruise_speed_X
+        _pending_spd_btn   = None    # CruiseButtons value for speed adjustment
 
         while self._keep_alive:
             throttle_out = steer_out = brake_out = 0.0
@@ -100,6 +116,23 @@ class BeamNGBridge(SimulatorBridge):
                             self.simulator_state.cruise_button = CruiseButtons.CANCEL
                         elif m[1] == "main":
                             self.simulator_state.cruise_button = CruiseButtons.MAIN
+                        elif m[1] == "speed" and len(m) >= 3:
+                            # cruise_speed_45 → ramp cruise to 45 mph via delta button presses
+                            try:
+                                target_mph = float(m[2])
+                                v_cruise_kph = self.simulated_car.sm['controlsState'].vCruise
+                                v_cruise_mph = v_cruise_kph / 1.609
+                                delta = int(round(target_mph - v_cruise_mph))
+                                if delta != 0:
+                                    _pending_spd_presses = abs(delta)
+                                    _pending_spd_btn = (CruiseButtons.RES_ACCEL if delta > 0
+                                                        else CruiseButtons.DECEL_SET)
+                            except (ValueError, IndexError):
+                                pass
+                    elif m[0] == "driver":
+                        if len(m) >= 3 and m[1] == "mode":
+                            _driver_mode = (m[2] == "on")
+                            print(f'[BRG] driver_mode={_driver_mode}', flush=True)
                     elif m[0] == "blinker":
                         if m[1] == "left":
                             self.simulator_state.left_blinker = True
@@ -107,6 +140,15 @@ class BeamNGBridge(SimulatorBridge):
                             self.simulator_state.right_blinker = True
                     elif m[0] == "ignition":
                         self.simulator_state.ignition = not self.simulator_state.ignition
+                    elif m[0] == "fov" and len(m) >= 3:
+                        try:
+                            new_fov = float(m[2])
+                            if m[1] == "road":
+                                self.world.set_camera_fov(road_fov=new_fov)
+                            elif m[1] == "wide":
+                                self.world.set_camera_fov(wide_fov=new_fov)
+                        except (ValueError, AttributeError):
+                            pass
                     elif m[0] == "reset":
                         self.world.reset()
                     elif m[0] == "quit":
@@ -132,54 +174,81 @@ class BeamNGBridge(SimulatorBridge):
                 # runtime's existing /MAX_STEER_DEG normalization cancels it back to ±1.
                 steer_op = act.torque * 495.0
 
-                self.past_startup_engaged = True
+            # ── Cruise speed ramp (one press per frame when pending) ───────────
+            # Only fire if no other button event claimed this frame.
+            if _pending_spd_presses > 0 and self.simulator_state.cruise_button == 0:
+                self.simulator_state.cruise_button = _pending_spd_btn
+                _pending_spd_presses -= 1
 
-                # Pulse RES_ACCEL to ramp cruise speed up from 0 kph after first engage.
-                if post_engage_cnt < 120:
-                    post_engage_cnt += 1
-                    if post_engage_cnt % 12 == 1:
-                        self.simulator_state.cruise_button = CruiseButtons.RES_ACCEL
-
-            elif not self.past_startup_engaged and self.simulated_car.sm['selfdriveState'].engageable:
-                self.simulator_state.cruise_button = (
-                    CruiseButtons.DECEL_SET if self.startup_button_prev else CruiseButtons.MAIN
-                )
-                self.startup_button_prev = not self.startup_button_prev
-
-            throttle_out = throttle_op if self.simulator_state.is_engaged else throttle_manual
-            brake_out    = brake_op    if self.simulator_state.is_engaged else brake_manual
-            steer_out    = steer_op    if self.simulator_state.is_engaged else steer_manual
+            # ── Control priority ──────────────────────────────────────────────
+            # Manual FIFO inputs (Option A) are primary over openpilot when engaged.
+            # Brake overrides openpilot and cancels cruise (longitudinal) while MADS
+            # lateral stays active in sunnypilot.
+            if self.simulator_state.is_engaged:
+                steer_out    = steer_manual    if steer_manual    != 0 else steer_op
+                throttle_out = throttle_manual if throttle_manual != 0 else throttle_op
+                if brake_manual > 0:
+                    brake_out = brake_manual
+                    if self.simulator_state.cruise_button == 0:
+                        self.simulator_state.cruise_button = CruiseButtons.CANCEL
+                else:
+                    brake_out = brake_op
+            else:
+                steer_out    = steer_manual
+                throttle_out = throttle_manual
+                brake_out    = brake_manual
 
             if self.rk.frame % 100 == 0:
                 act = self.simulated_car.sm['carControl'].actuators
+                dm = ' [DRIVER]' if _driver_mode else ''
                 print(
-                    f"[BRG] eng={self.simulator_state.is_engaged} "
-                    f"steer_out={steer_out:.2f} "
+                    f"[BRG]{dm} eng={self.simulator_state.is_engaged} "
+                    f"steer_out={steer_out:.2f} beamng_steer_deg={self.simulator_state.steering_angle:.1f} "
                     f"(angDeg={act.steeringAngleDeg:.2f} torque={act.torque:.3f} curv={act.curvature:.4f}) "
                     f"thr={throttle_out:.3f} brk={brake_out:.3f}",
                     flush=True,
                 )
 
-            self.world.apply_controls(steer_out, throttle_out, brake_out,
-                                       engaged=self.simulator_state.is_engaged)
+            # ── Option B: driver mode ─────────────────────────────────────────
+            # When active, stop sending controls so BeamNG returns to player input.
+            # Watch electrics.brake to detect player braking and cancel cruise.
+            if _driver_mode:
+                player_brake = getattr(self.world, 'player_brake', 0.0)
+                if player_brake > 0.05 and self.simulator_state.is_engaged:
+                    if self.simulator_state.cruise_button == 0:
+                        self.simulator_state.cruise_button = CruiseButtons.CANCEL
+            else:
+                self.world.apply_controls(steer_out, throttle_out, brake_out,
+                                           engaged=self.simulator_state.is_engaged)
+
             self.world.read_state()
             self.world.read_sensors(self.simulator_state)
 
-            # Vehicle recovery teleport — clear excessive-actuation flag and re-arm engage.
+            _now = time.monotonic()
+            if _now - _last_watchdog >= 5.0:
+                print(f'[BRG] heartbeat frame={self.rk.frame} eng={self.simulator_state.is_engaged} '
+                      f'driver_mode={_driver_mode} sensor_thread_alive={self.world._sensor_thread.is_alive()}',
+                      flush=True)
+                _last_watchdog = _now
+
+            # Vehicle recovery teleport — clear excessive-actuation flag.
             if hasattr(self.world, 'consume_vehicle_reset') and self.world.consume_vehicle_reset():
-                print('[BRG] Vehicle reset — sending CANCEL, re-arming engage once disengaged', flush=True)
+                print('[BRG] Vehicle reset — sending CANCEL; re-engage manually via Controls panel.',
+                      flush=True)
                 Params().remove('Offroad_ExcessiveActuation')
                 self.simulator_state.cruise_button = CruiseButtons.CANCEL
                 pending_reengage = True
 
-            # Wait until is_engaged actually drops before clearing past_startup_engaged,
-            # otherwise the 1-2 frame lag before CANCEL is processed re-sets the flag.
             if pending_reengage and not self.simulator_state.is_engaged:
-                self.past_startup_engaged = False
-                self.startup_button_prev = True
-                post_engage_cnt = 0
                 pending_reengage = False
-                print('[BRG] Auto-engage re-armed after vehicle reset', flush=True)
+                print('[BRG] Disengaged after reset — use Controls panel to re-engage.', flush=True)
+
+            if self.rk.frame % 10 == 0:
+                try:
+                    with open(ENGAGED_FILE, 'w') as _ef:
+                        _ef.write('1' if self.simulator_state.is_engaged else '0')
+                except Exception:
+                    pass
 
             if self.world.exit_event.is_set():
                 self.shutdown()

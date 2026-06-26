@@ -60,9 +60,9 @@ BEAMNG_PORT = int(os.environ.get("BEAMNG_PORT", "64256"))
 DATA_PORT = int(os.environ.get("DATA_PORT", "12321"))
 
 # WSL-side paths (these are Linux paths, used inside wsl commands)
-WSL_OPENPILOT_DIR  = "~/openpilot"
-WSL_VENV_PYTHON    = "~/openpilot/.venv/bin/python"
-WSL_LAUNCH_OP      = "~/openpilot/tools/sim/launch_openpilot.sh"
+WSL_OPENPILOT_DIR  = "~/sunnypilot"
+WSL_VENV_PYTHON    = "~/sunnypilot/.venv/bin/python"
+WSL_LAUNCH_OP      = "~/sunnypilot/tools/sim/launch_openpilot.sh"
 # Bridge project root (Windows path — converted to WSL in win_to_wsl())
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 

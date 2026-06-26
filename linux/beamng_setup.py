@@ -1,28 +1,24 @@
 #!/usr/bin/env python3
 """
-BeamNG scenario launcher — Windows side.
+BeamNG scenario launcher — Linux side.
 
-Responsible for one thing: launching BeamNG.Drive and loading a scenario.
-All runtime sensor polling, camera streaming, and vehicle control live in
-beamng_runtime.py so this file stays easy to read and modify.
+Mirrors windows/beamng_setup.py exactly, except connection uses launch=False
+because BeamNG must run on the Bazzite host (distrobox lacks libnspr4.so).
+start.sh launches BeamNG with -nosteam -tcom -tport 64256 before this runs.
 
 Public API
 ----------
-setup_beamng() -> (bng, vehicle, imu, camera)
-    Launch BeamNG, load the configured scenario, and return the raw beamngpy
-    objects.  Caller is responsible for closing bng when done.
+setup_beamng() -> (bng, vehicle, imu, camera, camera_wide)
 """
 
 import logging
 import os
 import sys
+import time
 
 from beamngpy import BeamNGpy, Scenario, Vehicle
 from beamngpy.sensors import AdvancedIMU, Camera, Electrics
 
-# Suppress beamngpy's verbose DEBUG output at import time.
-# beamngpy attaches StreamHandlers to its own loggers, so basicConfig alone
-# (which only touches the root handler) is not enough.
 logging.basicConfig(level=logging.WARNING)
 for _name in list(logging.Logger.manager.loggerDict.keys()):
     if _name.startswith("beamngpy"):
@@ -36,15 +32,18 @@ for _name in list(logging.Logger.manager.loggerDict.keys()):
 
 BEAMNG_HOME = os.environ.get(
     "BEAMNG_HOME",
-    r"C:\Program Files (x86)\Steam\steamapps\common\BeamNG.drive",
+    "/home/alex/.local/share/Steam/steamapps/common/BeamNG.drive",
+)
+BEAMNG_USER = os.environ.get(
+    "BEAMNG_USER",
+    "/home/alex/.local/share/BeamNG/BeamNG.tech/current",
 )
 BEAMNG_HOST = os.environ.get("BEAMNG_HOST", "localhost")
 BEAMNG_PORT = int(os.environ.get("BEAMNG_PORT", "64256"))
 
-VEHICLE_MODEL  = os.environ.get("BEAMNG_MODEL", "bastion")
-SCENARIO_MAP   = os.environ.get("BEAMNG_MAP",   "west_coast_usa")
-
-DUAL_CAMERA    = os.environ.get("DUAL_CAMERA", "0") == "1"
+VEHICLE_MODEL = os.environ.get("BEAMNG_MODEL", "bastion")
+SCENARIO_MAP  = os.environ.get("BEAMNG_MAP",   "west_coast_usa")
+DUAL_CAMERA   = os.environ.get("DUAL_CAMERA",  "0") == "1"
 
 SPAWN_POS      = (-829.5, -499.0, 106.8)
 SPAWN_ROT_QUAT = (0.0, 0.0, -0.9272, 0.3746)
@@ -52,40 +51,32 @@ SPAWN_ROT_QUAT = (0.0, 0.0, -0.9272, 0.3746)
 CAM_POS = (0.0, -0.4, 1.22)
 CAM_DIR = (0.0, -1.0, 0.0)
 CAM_UP  = (0.0,  0.0, 1.0)
-CAM_FOV      = 25.69
-CAM_WIDE_FOV = 94.68   # 2 * degrees(arctan(604 / 567)) — matches Comma 3 wide cam focal length of 567 px
+CAM_FOV      = 25.69   # vertical FOV matching openpilot road cam focal length 2648px @ 1208h
+CAM_WIDE_FOV = 94.68  # vertical FOV matching openpilot wide cam focal length 567px @ 1208h
 
 W, H = 1928, 1208
-CAM_RENDER_W = W // 1   # render at half-res, upscale in WSL bridge
-CAM_RENDER_H = H // 1
-
-MAX_STEER_DEG = 495.0         # Corolla TSS2 max wheel travel (±495°); normalises OP's angle commands to BeamNG's ±1
-MAX_STEER_RATE_DEG_S = 60.0  # max steering change rate (°/s) to simulate EPAS response speed
+CAM_RENDER_W = W
+CAM_RENDER_H = H
 
 
 # ---------------------------------------------------------------------------
-# Scenario setup
+# Public API
 # ---------------------------------------------------------------------------
 
-def setup_beamng():
+def setup_beamng(port=BEAMNG_PORT, home=BEAMNG_HOME, user=BEAMNG_USER,
+                 dual_camera=DUAL_CAMERA, timeout=120.0):
     """
-    Launch BeamNG, load the scenario, and return (bng, vehicle, imu, camera, camera_wide).
-    camera_wide is None when DUAL_CAMERA env var is not "1".
-    Prints BEAMNG_READY to stdout when the scenario is live.
+    Connect to BeamNG (already launched by start.sh) and load the scenario.
+    Returns (bng, vehicle, imu, camera, camera_wide).
+    Prints BEAMNG_READY when the scenario is live.
     """
-    print(f"[Setup] Launching BeamNG from: {BEAMNG_HOME}", flush=True)
-    bng = BeamNGpy(BEAMNG_HOST, BEAMNG_PORT, home=BEAMNG_HOME)
-    try:
-        bng.open(launch=True)
-    except Exception as exc:
-        print(f"[Setup] ERROR: Could not launch BeamNG: {exc}", flush=True)
-        sys.exit(1)
+    print(f"[Setup] Connecting to BeamNG on {BEAMNG_HOST}:{port}...", flush=True)
+    bng = _connect_with_retry(port, home, user, timeout)
 
-    print("[Setup] BeamNG running. Loading scenario...", flush=True)
-    vehicle, imu, camera, camera_wide = _setup_scenario(bng)
+    print("[Setup] Connected. Loading scenario...", flush=True)
+    vehicle, imu, camera, camera_wide = _setup_scenario(bng, dual_camera)
 
-    # Re-apply log suppression — AdvancedIMU creates its own logger lazily during
-    # _setup_scenario(), after our initial filter ran above.
+    # Re-suppress logs — AdvancedIMU creates its logger lazily during setup.
     for _name in list(logging.Logger.manager.loggerDict.keys()):
         _lg = logging.getLogger(_name)
         _lg.setLevel(logging.WARNING)
@@ -96,13 +87,35 @@ def setup_beamng():
     return bng, vehicle, imu, camera, camera_wide
 
 
-def _setup_scenario(bng: BeamNGpy) -> tuple:
-    """Load west_coast_usa, spawn the vehicle, attach sensors."""
+# ---------------------------------------------------------------------------
+# Internals
+# ---------------------------------------------------------------------------
+
+def _connect_with_retry(port, home, user, timeout):
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            bng = BeamNGpy(BEAMNG_HOST, port, home=home, user=user)
+            bng.open(launch=False)
+            print(f"[Setup] Connected (attempt {attempt})", flush=True)
+            return bng
+        except Exception as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(f"[Setup] ERROR: Could not connect after {timeout:.0f} s: {exc}", flush=True)
+                sys.exit(1)
+            print(f"[Setup] Waiting for BeamNG... ({remaining:.0f} s left, attempt {attempt})", flush=True)
+            time.sleep(3.0)
+
+
+def _setup_scenario(bng, dual_camera):
     scenario = Scenario(SCENARIO_MAP, "openpilot_bridge",
                         description="openpilot BeamNG bridge")
     vehicle = Vehicle("ego", model=VEHICLE_MODEL, license="OPENPILOT")
 
-    # Phase 1 — lightweight sensor before the scenario loads.
+    # Electrics is a vehicle-side sensor — attach before scenario loads.
     vehicle.sensors.attach("electrics", Electrics())
 
     scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT_QUAT)
@@ -114,14 +127,13 @@ def _setup_scenario(bng: BeamNGpy) -> tuple:
     vehicle.control(throttle=0.0, brake=0.0, steering=0.0)
     vehicle.set_shift_mode("realistic_automatic")
 
-    # Phase 2 — CommBase sensors need an active simulation.
     imu = AdvancedIMU(
         "imu", bng, vehicle,
         pos=(0.0, 0.0, 1.0),
         dir=CAM_DIR,
         up=CAM_UP,
         is_using_gravity=True,
-        is_send_immediately=True,
+        is_send_immediately=True,   # VE path — avoids GE-socket race with camera.poll()
         is_visualised=False,
     )
     camera = Camera(
@@ -135,9 +147,12 @@ def _setup_scenario(bng: BeamNGpy) -> tuple:
         is_render_annotations=False,
         is_render_depth=False,
         is_visualised=False,
+        is_streaming=True,
+        is_using_shared_memory=True,
+        requested_update_time=0.01,   # target 100 fps; BeamNG clamps to its render rate
     )
     camera_wide = None
-    if DUAL_CAMERA:
+    if dual_camera:
         camera_wide = Camera(
             "wide_cam", bng, vehicle,
             pos=CAM_POS,
@@ -149,8 +164,11 @@ def _setup_scenario(bng: BeamNGpy) -> tuple:
             is_render_annotations=False,
             is_render_depth=False,
             is_visualised=False,
+            is_streaming=True,
+            is_using_shared_memory=True,
+            requested_update_time=0.01,
         )
 
-    dual_str = "dual" if DUAL_CAMERA else "single"
+    dual_str = "dual" if dual_camera else "single"
     print(f"[Setup] '{VEHICLE_MODEL}' spawned on '{SCENARIO_MAP}' ({dual_str} camera).", flush=True)
     return vehicle, imu, camera, camera_wide
