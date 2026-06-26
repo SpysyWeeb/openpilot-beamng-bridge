@@ -1,6 +1,6 @@
 # openpilot-beamng-bridge
 
-A bridge that connects [BeamNG.drive](https://www.beamng.com/) to [sunnypilot](https://github.com/sunnyhaibin/sunnypilot) (an openpilot fork), allowing BeamNG to serve as a simulation environment for testing openpilot's driving model, lateral control, and longitudinal tuning.
+A bridge that connects [BeamNG.drive](https://www.beamng.com/) to [openpilot](https://github.com/commaai/openpilot) or even forks like [sunnypilot](https://github.com/sunnyhaibin/sunnypilot), allowing BeamNG to serve as a simulation environment for testing openpilot's driving model, lateral control, and longitudinal tuning.
 
 ---
 
