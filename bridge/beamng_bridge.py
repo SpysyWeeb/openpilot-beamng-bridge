@@ -16,24 +16,28 @@ from openpilot.tools.sim.lib.common import World
 from openpilot.tools.sim.lib.simulated_car import SimulatedCar
 from openpilot.tools.sim.lib.simulated_sensors import SimulatedSensors
 
-from bridge.beamng_world import BeamNGWorld
-
+from bridge.beamng_world import MAX_STEER_DEG
 
 
 class BeamNGBridge(SimulatorBridge):
     """
-    SimulatorBridge subclass for BeamNG.Drive.
+    SimulatorBridge subclass for BeamNG.drive.
 
     Overrides _run() to handle BeamNG-specific control translation:
-      - Toyota Corolla TSS2 uses angle-based lateral control (actuators.steeringAngleDeg).
-      - Pulses RES_ACCEL after auto-engage to ramp cruise speed from 0.
-      - Detects vehicle recovery teleports and re-arms auto-engage.
+      - Honda Civic 2022 fingerprint → torque-based lateral control; actuator
+        torque (±1) is scaled to a ±MAX_STEER_DEG wheel angle for the world.
+      - cruise_speed_<mph> FIFO commands ramp the set speed via one RES/SET
+        button press per frame.
+      - Detects vehicle recovery teleports, clears the excessive-actuation
+        fault, and cancels cruise so the driver can re-engage.
 
     openpilot's common.py is left completely stock.
     """
 
     def spawn_world(self, q: Queue) -> World:
-        return BeamNGWorld(q, dual_camera=self.dual_camera)
+        raise NotImplementedError(
+            'BeamNGWorld needs live beamngpy handles and must be built '
+            'in-process — see linux/bridge_runner.py')
 
     def _run_with_world(self, q: Queue):
         """Like _run() but uses self.world as already set (no spawn_world call).
@@ -170,9 +174,10 @@ class BeamNGBridge(SimulatorBridge):
                 throttle_op = np.clip(act.accel / 1.6, 0.0, 1.0)
                 brake_op    = np.clip(-act.accel / 4.0, 0.0, 1.0)
 
-                # Honda Civic 2022 is torque-controlled. Scale ±1 torque to ±495 so the
-                # runtime's existing /MAX_STEER_DEG normalization cancels it back to ±1.
-                steer_op = act.torque * 495.0
+                # Honda Civic 2022 is torque-controlled. Scale ±1 torque to a wheel
+                # angle; beamng_world.apply_controls() divides by MAX_STEER_DEG,
+                # cancelling it back to BeamNG's ±1 steering input.
+                steer_op = act.torque * MAX_STEER_DEG
 
             # ── Cruise speed ramp (one press per frame when pending) ───────────
             # Only fire if no other button event claimed this frame.

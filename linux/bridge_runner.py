@@ -5,14 +5,15 @@ Usage (from inside the openpilot-beamng-bridge distrobox):
     python3 ~/Documents/BeamNG-Openpilot-Bridge/linux/bridge_runner.py [--dual-camera]
 
 Prerequisites:
-    start.sh already launched BeamNG with -nosteam -tcom -tport 64256.
+    BeamNG is already running on the host with -nosteam -tcom -tport 64256
+    (the control panel's BeamNG component / launch_beamng.sh does this).
 """
 import argparse
 import os
 import sys
 import threading
 
-OPENPILOT_DIR = os.path.expanduser('~/sunnypilot')
+OPENPILOT_DIR = os.path.expanduser(os.environ.get('OPENPILOT_DIR', '~/openpilot'))
 if OPENPILOT_DIR not in sys.path:
     sys.path.insert(0, OPENPILOT_DIR)
 
@@ -22,9 +23,13 @@ if BRIDGE_DIR not in sys.path:
 
 from multiprocessing import Queue
 
-from linux.beamng_setup import setup_beamng, BEAMNG_PORT, BEAMNG_HOME, BEAMNG_USER
+from linux.beamng_setup import setup_beamng, BEAMNG_PORT
 from bridge.beamng_bridge import BeamNGBridge
 from bridge.beamng_world import BeamNGWorld
+from bridge import op_shims
+
+# Correct stock-sim defects (openpilot checkout itself stays pristine).
+op_shims.apply()
 
 # Written once sensors are live; start.sh polls for this before launching openpilot.
 READY_FILE   = '/tmp/openpilot_beamng_bridge_ready'
@@ -58,7 +63,8 @@ def _start_cmd_fifo(q):
 
 def main():
     parser = argparse.ArgumentParser(description='BeamNG ↔ openpilot bridge (Linux)')
-    parser.add_argument('--dual-camera', action='store_true', default=True)
+    parser.add_argument('--dual-camera', action=argparse.BooleanOptionalAction, default=True,
+                        help='stream the wide road camera too (--no-dual-camera to disable)')
     parser.add_argument('--port', type=int, default=BEAMNG_PORT)
     parser.add_argument('--model', default=None, help='Override BEAMNG_MODEL env var')
     parser.add_argument('--map',   default=None, help='Override BEAMNG_MAP env var')

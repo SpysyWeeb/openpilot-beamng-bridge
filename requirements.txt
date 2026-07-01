@@ -1,2 +1,2 @@
-beamngpy>=2.0
+beamngpy>=1.30
 numpy

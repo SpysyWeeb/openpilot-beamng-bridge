@@ -17,8 +17,11 @@ import sys
 import time
 from datetime import datetime
 
-sys.path.insert(0, '/home/alex/sunnypilot')
-import cereal.messaging as messaging
+sys.path.insert(0, os.path.expanduser(os.environ.get('OPENPILOT_DIR', '~/openpilot')))
+try:
+    import openpilot.cereal.messaging as messaging   # nested layout (new openpilot master)
+except ImportError:
+    import cereal.messaging as messaging             # legacy layout (older trees / forks)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--log-dir', default=os.path.join(os.path.dirname(__file__), '..', 'logs'))

@@ -4,7 +4,6 @@ tech.key
 
 # Runtime logs
 *.log
-steer_debug.log
 
 # Python
 __pycache__/

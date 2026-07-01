@@ -28,7 +28,7 @@ from gi.repository import Gtk, GLib, Gdk, Pango   # noqa: E402
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OPENPILOT  = os.path.expanduser('~/sunnypilot')
+OPENPILOT  = os.path.expanduser(os.environ.get('OPENPILOT_DIR', '~/openpilot'))
 DISTROBOX  = 'openpilot-beamng-bridge'
 LOG_DIR    = os.path.join(SCRIPT_DIR, 'logs')
 READY_FILE   = '/tmp/openpilot_beamng_bridge_ready'
@@ -133,6 +133,15 @@ def _save_gui_config(cfg: dict) -> None:
 
 # ── Process / file helpers ─────────────────────────────────────────────────────
 
+def _op_rel(rel: str) -> str:
+    """Resolve a repo-relative openpilot path across layouts: new openpilot
+    masters nest the package under openpilot/ (e.g. openpilot/tools/sim/…),
+    while older trees and most forks keep tools/ at the repo root."""
+    if os.path.exists(os.path.join(OPENPILOT, 'openpilot', rel)):
+        return os.path.join('openpilot', rel)
+    return rel
+
+
 def _pgrep(pattern: str) -> bool:
     try:
         r = subprocess.run(['pgrep', '-f', pattern],
@@ -221,6 +230,10 @@ def _db(inner: str) -> list[str]:
         'bash', '-c',
         (f"source '{OPENPILOT}/.venv/bin/activate' && "
          f"export PYTHONPATH='{OPENPILOT}:{SCRIPT_DIR}' && "
+         # openpilot's UI talks to NetworkManager on the SYSTEM D-Bus; inside the
+         # distrobox that's only reachable via the host mount at /run/host.
+         "[ -S /run/host/run/dbus/system_bus_socket ] && "
+         "export DBUS_SYSTEM_BUS_ADDRESS='unix:path=/run/host/run/dbus/system_bus_socket'; "
          f"{inner}"),
     ]
 
@@ -237,7 +250,7 @@ def make_metadrive_components(dual_camera: bool = False) -> list[dict]:
             'log_path'      : os.path.join(LOG_DIR, 'openpilot_current.log'),
             'log_clear'     : True,
             'launch_cmd'    : _db(
-                f"cd '{OPENPILOT}' && exec bash tools/sim/launch_openpilot.sh"),
+                f"cd '{OPENPILOT}' && exec bash {_op_rel('tools/sim/launch_openpilot.sh')}"),
             'ready'         : 'process',
             'ready_timeout' : 60,
             'ready_delay'   : 5.0,
@@ -251,7 +264,7 @@ def make_metadrive_components(dual_camera: bool = False) -> list[dict]:
             'log_path'      : os.path.join(LOG_DIR, 'bridge_current.log'),
             'log_clear'     : True,
             'launch_cmd'    : _db(
-                f"cd '{OPENPILOT}' && exec python3 tools/sim/run_bridge.py"
+                f"cd '{OPENPILOT}' && exec python3 {_op_rel('tools/sim/run_bridge.py')}"
                 + (f" {dual}" if dual else "")),
             'ready'         : 'process',
             'ready_timeout' : 60,
@@ -261,7 +274,8 @@ def make_metadrive_components(dual_camera: bool = False) -> list[dict]:
 
 
 def make_components(dual_camera: bool = False) -> list[dict]:
-    dual = '--dual-camera' if dual_camera else ''
+    # bridge_runner defaults to dual camera — pass the explicit flag either way
+    dual = '--dual-camera' if dual_camera else '--no-dual-camera'
     return [
         {
             'id'            : 'beamng',
@@ -288,8 +302,7 @@ def make_components(dual_camera: bool = False) -> list[dict]:
             'log_clear'     : True,
             # exec python3 replaces the bash wrapper so pgrep sees bridge_runner.py
             'launch_cmd'    : _db(
-                f"exec python3 '{SCRIPT_DIR}/linux/bridge_runner.py'"
-                + (f" {dual}" if dual else "")),
+                f"exec python3 '{SCRIPT_DIR}/linux/bridge_runner.py' {dual}"),
             'ready'         : 'sentinel',
             'ready_timeout' : 180,
             'ready_delay'   : 0.0,
@@ -304,7 +317,7 @@ def make_components(dual_camera: bool = False) -> list[dict]:
             'log_clear'     : True,
             # cd is a shell builtin — can't exec it; exec bash replaces the wrapper
             'launch_cmd'    : _db(
-                f"cd '{OPENPILOT}' && exec bash tools/sim/launch_openpilot.sh"),
+                f"cd '{OPENPILOT}' && exec bash {_op_rel('tools/sim/launch_openpilot.sh')}"),
             'ready'         : 'process',
             'ready_timeout' : 60,
             'ready_delay'   : 5.0,
@@ -1256,8 +1269,8 @@ class BridgeApp(Gtk.Application):
 def main() -> None:
     ap = argparse.ArgumentParser(
         description='BeamNG / MetaDrive ↔ openpilot Bridge Control Panel')
-    ap.add_argument('--dual-camera', action='store_true', default=True,
-                    help='Pass --dual-camera to bridge_runner.py / run_bridge.py')
+    ap.add_argument('--dual-camera', action=argparse.BooleanOptionalAction, default=True,
+                    help='Stream the wide road camera too (--no-dual-camera to disable)')
     ap.add_argument('--metadrive', action='store_true', default=False,
                     help='Use MetaDrive instead of BeamNG')
     args = ap.parse_args()

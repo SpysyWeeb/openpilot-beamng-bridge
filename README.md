@@ -57,10 +57,11 @@ A BeamNG.tech license can be obtained from [BeamNG's website](https://www.beamng
 
 ### Other Requirements
 
-- **openpilot** (or a compatible fork) checked out and built inside the distrobox
+- **openpilot** (or a compatible fork) checked out and built inside the distrobox — `~/openpilot` by default, overridable with the `OPENPILOT_DIR` env var. Both the new nested layout (`openpilot/tools/sim/…`, openpilot master since June 2026) and the legacy root layout (`tools/sim/…`, most forks) are supported; **no changes to the openpilot checkout are needed or wanted** — the bridge treats it as read-only.
 - **distrobox** (Ubuntu container on the Bazzite host)
-- **beamngpy** installed in the distrobox environment (`pip install beamngpy`)
-- **GTK4** available in the distrobox for the control panel GUI
+- **beamngpy** installed into openpilot's venv inside the distrobox (`uv pip install --python ~/openpilot/.venv/bin/python beamngpy`)
+- **GTK4 / PyGObject on the host** — the control panel runs on the Bazzite host, not in the distrobox
+- **Audio libs in the distrobox** for openpilot's alert sounds (`soundd`): `sudo apt install libportaudio2 libasound2-plugins`, plus an `/etc/asound.conf` routing ALSA's default device to Pulse (`pcm.!default pulse` / `ctl.!default pulse`) so audio reaches the host's PipeWire
 
 ---
 
@@ -82,8 +83,8 @@ A BeamNG.tech license can be obtained from [BeamNG's website](https://www.beamng
   - Road and wide camera FOV sliders for live tuning (hot-swaps BeamNG cameras without restart)
 - MetaDrive mode (`--metadrive` flag / `start_metadrive.sh`) for running the stock openpilot MetaDrive bridge as a comparison baseline
 
-### Manual Input Priority (Option A)
-When openpilot is engaged, physical controller inputs (steer/throttle/brake via FIFO) take priority over openpilot's commands. Braking cancels longitudinal cruise while lateral control remains active, mirroring real-world driver override behavior.
+### Bridge Command FIFO (Option A plumbing)
+The bridge listens on a named pipe (`/tmp/beamng_bridge_cmd`) for control commands. The GTK panel uses it for the cruise buttons, set-speed ramp, driver mode, and FOV sliders. The bridge additionally accepts `steer_<v>`, `throttle_<v>`, `brake_<v>`, `blinker_left`/`blinker_right`, `ignition`, and `reset` — **no controller daemon ships with the repo yet**, so these fire only if something writes them to the FIFO (e.g. `echo brake_1.0 > /tmp/beamng_bridge_cmd`). When a manual steer/throttle/brake value is present it takes priority over openpilot's commands, and manual braking cancels longitudinal cruise. These commands are the seed of the future translation layer (ignition, blinkers, driver inputs as a real car would report them).
 
 ### Driver Mode (Option B)
 A full driver takeover mode that stops forwarding any openpilot commands to BeamNG, returning full control to the player. Physical braking while in this mode sends a cruise CANCEL to openpilot.
@@ -96,7 +97,7 @@ A full driver takeover mode that stops forwarding any openpilot commands to Beam
 openpilot's sim infrastructure fingerprints the car as a **Honda Civic 2022**. The Honda Civic uses a torque-based lateral controller (`latcontrol_torque`) whose gains (`liveTorqueParameters`) and steer ratio (`liveParameters`) are learned from real Honda Civic driving data. BeamNG's simulated vehicle has completely different steering dynamics, so the controller operates with wrong feedback gains. The car can steer, but it doesn't track lanes accurately until `liveTorqueParameters` and `liveParameters` converge — which requires sustained driving and may never fully match BeamNG's dynamics.
 
 ### 2. MetaDrive Also Not Lane-Keeping
-The same dynamics mismatch affects the stock openpilot MetaDrive bridge. Additionally, `latcontrol_torque` returns `steeringAngleDeg = 0.0` (hardcoded), so MetaDrive's bridge — which reads `actuators.steeringAngleDeg` — was receiving zero steer signal. Fixed here by converting `actuators.curvature` to a steering angle via the Ackermann formula using the car's actual wheelbase and steer ratio from `carParams`.
+The same dynamics mismatch affects the stock openpilot MetaDrive bridge. Additionally, `latcontrol_torque` returns `steeringAngleDeg = 0.0` (hardcoded), so a MetaDrive bridge that reads `actuators.steeringAngleDeg` receives zero steer signal. An earlier iteration of this project patched the MetaDrive bridge (curvature → steering angle via the Ackermann formula); under the pristine-openpilot policy that patch is no longer applied — MetaDrive mode now runs whatever stock openpilot does.
 
 ### 3. Camera Calibration
 `liveCalibration` is pre-seeded with `rpyCalib = [0, 0, 0]` (camera perfectly level, no pitch/yaw offset). This is a reasonable starting point but may not match the actual camera mounting angle in the BeamNG scene. `calibrationd` re-learns this from visual odometry over time.
@@ -109,6 +110,9 @@ The openpilot wide camera model expects a ~120° horizontal FOV equivalent to an
 
 ### 6. BeamNG on Linux via Proton
 BeamNG.drive runs on Linux via Steam/Proton. The `-nosteam -tcom -tport 64256` launch flags need to be passed through the Proton launch configuration. See `launch_beamng.sh` and `start.sh` for the working launch setup.
+
+### 7. Stock Sim Camera Timestamps (fixed via runtime shim)
+openpilot's `tools/sim/lib/camerad.py` stamps vipc frames with a synthetic clock (`frame_id × 50 ms`) while the sim IMU messages use real monotonic time. locationd's filter follows the IMU clock, so every `cameraOdometry` observation fails the rewind check ("ignored due to failed timing check") and `livePose` runs IMU-only — degrading exactly the signals `torqued`/`paramsd` need to learn the vehicle. `bridge/op_shims.py` patches the frame timestamps to real monotonic time at runtime, keeping the openpilot checkout untouched. The stock MetaDrive bridge has the same defect — upstream PR candidate.
 
 ---
 

@@ -116,28 +116,14 @@ class BeamNGWorld(World):
         """Poll vehicle state + IMU + Electrics at ~60 Hz."""
         rk = Ratekeeper(60, None)
         prev_pos  = None
-        first_iter = True
 
         while not self._exit.is_set():
             try:
-                if first_iter:
-                    print('[BeamNGWorld] _sensor_loop: first iteration — polling VE sensors...', flush=True)
-
                 # Poll Electrics (VE socket) + IMU (VE path, is_send_immediately=True)
                 # together under _ve_lock so they don't race with vehicle.control().
                 with self._ve_lock:
-                    if first_iter:
-                        print('[BeamNGWorld] _sensor_loop: calling vehicle.sensors.poll()...', flush=True)
                     self.vehicle.sensors.poll()
-                    if first_iter:
-                        print('[BeamNGWorld] _sensor_loop: vehicle.sensors.poll() done; calling imu.poll()...', flush=True)
                     imu_readings = self.imu.poll()
-                    if first_iter:
-                        print('[BeamNGWorld] _sensor_loop: imu.poll() done.', flush=True)
-
-                if first_iter:
-                    print('[BeamNGWorld] _sensor_loop: VE lock released; reading state...', flush=True)
-                    first_iter = False
 
                 state = self.vehicle.state  # populated by poll()
 
@@ -248,14 +234,13 @@ class BeamNGWorld(World):
         Uses camera.stream() instead of camera.poll() so BeamNG writes frames
         directly into a shared memory buffer — no TCP round-trip per frame.
 
-        Publish rate is capped to stay below modeld's actual evaluation rate.
-        Publishing faster causes vipc frame-ID gaps that make modeld mark its
-        output invalid ("skipping model eval. Dropped N frames"), preventing
-        engagement.  CPU thneed inference takes ~120-150 ms (~7 Hz); 5 Hz is
-        safely below that floor.  Raise to 20 Hz if a USB GPU becomes available.
+        Publish rate is capped to stay at or below modeld's actual evaluation
+        rate.  Publishing faster causes vipc frame-ID gaps that make modeld
+        mark its output invalid ("skipping model eval. Dropped N frames"),
+        preventing engagement.
         """
         _first_frame = True
-        _frame_interval = 1.0 / 20.0  # 15 Hz — safely below CPU modeld's inference rate
+        _frame_interval = 1.0 / 20.0  # 20 Hz publish cap (= modeld's frame rate)
         _next_t = time.monotonic()
 
         while not self._exit.is_set():
