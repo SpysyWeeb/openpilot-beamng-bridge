@@ -116,6 +116,11 @@ class BeamNGWorld(World):
         """Poll vehicle state + IMU + Electrics at ~60 Hz."""
         rk = Ratekeeper(60, None)
         prev_pos  = None
+        # yaw-mapping diagnostic state: compare mapped gyro yaw against the
+        # yaw rate derived from the vehicle quaternion (ground truth).
+        _diag_next    = time.monotonic() + 5.0
+        _diag_bearing = None
+        _diag_t       = None
 
         while not self._exit.is_set():
             try:
@@ -143,8 +148,20 @@ class BeamNGWorld(World):
                 if 'accSmooth' in imu_data:
                     acc = imu_data['accSmooth']
                     gyr = imu_data.get('angVelSmooth', [0.0, 0.0, 0.0])
-                    accel = vec3(float(acc[0]), float(acc[1]), float(acc[2]))
-                    gyro  = vec3(float(gyr[0]), float(gyr[1]), float(gyr[2]))
+                    # ── BeamNG → openpilot IMU frame mapping ─────────────────
+                    # openpilot expects sensor messages in a [up, left, backward]
+                    # frame: locationd converts them to device [fwd, right, down]
+                    # as [-v2, -v1, -v0], and the accelerometer must read
+                    # [+9.81, 0, 0] at rest.  BeamNG's AdvancedIMU (with our
+                    # dir=forward, up=+Z config) reports in [forward, up, right]
+                    # with accSmooth sign-flipped specific force — at rest it
+                    # reads -9.81 on index 1 (verified from monitor_imu logs).
+                    # Feeding the raw vector made locationd's gyro/vision yaw
+                    # cross-check reject every gyroscope observation.
+                    # Horizontal/yaw signs are checked live by the [IMU] yaw
+                    # diagnostic below — flip here if it reports a mismatch.
+                    accel = vec3(-float(acc[1]),  float(acc[2]),  float(acc[0]))
+                    gyro  = vec3( float(gyr[1]), -float(gyr[2]), -float(gyr[0]))
                 else:
                     # No new IMU data — keep whatever is in _imu_accel/_imu_gyro
                     with self._lock:
@@ -179,6 +196,19 @@ class BeamNGWorld(World):
                     self._imu_gyro     = gyro
                     self._bearing      = bearing
                     self._state_valid  = True
+
+                # 5 s diagnostic: mapped gyro yaw (gyro.x = up axis, CCW+) must
+                # match the bearing-derived yaw rate in sign and magnitude.
+                _dnow = time.monotonic()
+                if _dnow >= _diag_next:
+                    if _diag_bearing is not None:
+                        db = (bearing - _diag_bearing + 180.0) % 360.0 - 180.0
+                        brate = math.radians(db) / (_dnow - _diag_t)
+                        print(f'[IMU] yaw_gyro={gyro.x:+.3f} rad/s  yaw_from_bearing={brate:+.3f} rad/s  '
+                              f'acc=[up {accel.x:+5.2f}, left {accel.y:+5.2f}, back {accel.z:+5.2f}]',
+                              flush=True)
+                    _diag_bearing, _diag_t = bearing, _dnow
+                    _diag_next = _dnow + 5.0
 
             except BaseException as exc:
                 if isinstance(exc, (SystemExit, KeyboardInterrupt)):
