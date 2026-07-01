@@ -1,78 +1,26 @@
 #!/usr/bin/env python3
 """
-Estimator-health probe — pinpoints what is tripping selfdrived's commIssue.
+Standalone CLI for the estimator health monitor.
 
-Logs, once per second, the valid/alive flags of the estimator chain plus the
-livePose health fields (inputsOK / sensorsOK / posenetOK) that torqued, lagd
-and paramsd gate their own validity on.  Text logs only show *that* services
-went invalid; this shows *why*.
+The bridge starts the same monitor automatically (bridge/health_monitor.py →
+logs/health_current.log); this wrapper exists for running it by hand against
+an openpilot stack when the bridge isn't up.
 
-Run inside the distrobox while the stack is up:
     python3 tools/health_probe.py [--log-dir /path/to/logs]
 """
 import argparse
 import os
 import sys
-import time
-from datetime import datetime
 
 sys.path.insert(0, os.path.expanduser(os.environ.get('OPENPILOT_DIR', '~/openpilot')))
-try:
-    import openpilot.cereal.messaging as messaging   # nested layout (new openpilot master)
-except ImportError:
-    import cereal.messaging as messaging             # legacy layout (older trees / forks)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-SERVICES = ['livePose', 'liveCalibration', 'liveDelay', 'liveParameters',
-            'liveTorqueParameters', 'selfdriveState', 'carState',
-            'longitudinalPlan', 'radarState']
+from bridge.health_monitor import run
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--log-dir', default=os.path.join(os.path.dirname(__file__), '..', 'logs'))
 args = parser.parse_args()
 
-log_dir = os.path.realpath(args.log_dir)
-os.makedirs(log_dir, exist_ok=True)
-log_path = os.path.join(log_dir, 'health_current.log')
-log_file = open(log_path, 'w', buffering=1)  # line-buffered so tail -f works
-
-
-def emit(msg: str):
-    line = f'[{datetime.now().strftime("%H:%M:%S")}] {msg}'
-    print(line, flush=True)
-    log_file.write(line + '\n')
-
-
-emit(f'health probe started (log → {log_path})')
-sm = messaging.SubMaster(SERVICES)
-last_print = 0.0
-
-while True:
-    sm.update(100)
-    now = time.monotonic()
-    if now - last_print < 1.0:
-        continue
-    last_print = now
-
-    # per-service alive/valid: '.' = ok, 'A' = not alive, 'V' = not valid
-    flags = []
-    for s in SERVICES:
-        if not sm.alive[s]:
-            flags.append(f'{s}=A')
-        elif not sm.valid[s]:
-            flags.append(f'{s}=V')
-    bad = ' '.join(flags) if flags else 'all-ok'
-
-    lp = sm['livePose']
-    cal = sm['liveCalibration']
-    sd = sm['selfdriveState']
-    car = sm['carState']
-    plan = sm['longitudinalPlan']
-    lead = sm['radarState'].leadOne
-    emit(
-        f'{bad:<60s} | livePose: inputsOK={bool(lp.inputsOK)} sensorsOK={bool(lp.sensorsOK)} '
-        f'posenetOK={bool(lp.posenetOK)} angVelValid={bool(lp.angularVelocityDevice.valid)} '
-        f'| cal: status={cal.calStatus} perc={cal.calPerc}% '
-        f'| enabled={bool(sd.enabled)} active={bool(sd.active)} vEgo={car.vEgo:.1f} '
-        f'| vCruise={car.vCruise:.0f}kph aTarget={plan.aTarget:+.2f} '
-        f'lead={bool(lead.status)} dRel={lead.dRel:.0f}m'
-    )
+log_path = os.path.join(os.path.realpath(args.log_dir), 'health_current.log')
+print(f'health probe → {log_path}')
+run(log_path, echo=True)

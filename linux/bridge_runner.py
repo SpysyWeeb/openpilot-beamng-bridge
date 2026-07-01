@@ -26,7 +26,7 @@ from multiprocessing import Queue
 from linux.beamng_setup import setup_beamng, BEAMNG_PORT
 from bridge.beamng_bridge import BeamNGBridge
 from bridge.beamng_world import BeamNGWorld
-from bridge import op_shims
+from bridge import health_monitor, op_shims
 
 # Correct stock-sim defects (openpilot checkout itself stays pristine).
 op_shims.apply()
@@ -100,6 +100,10 @@ def main():
     with open(READY_FILE, 'w') as f:
         f.write('ready\n')
     print('BRIDGE_READY', flush=True)
+
+    # Estimator health log (logs/health_current.log) — runs for the whole
+    # session so every test drive is diagnosable after the fact.
+    health_monitor.start(os.path.join(BRIDGE_DIR, 'logs', 'health_current.log'))
 
     bridge = BeamNGBridge(dual_camera=args.dual_camera, high_quality=False)
     bridge.world = world
