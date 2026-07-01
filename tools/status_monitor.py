@@ -3,7 +3,7 @@
 Status monitor for the openpilot ↔ BeamNG bridge.
 
 Shows a live curses TUI with green/red health indicators and log tails
-for every component.  Launched automatically by start.sh, or run manually:
+for every component.  Run manually:
 
     python3 tools/status_monitor.py
 
@@ -11,7 +11,6 @@ Keys:
     q / Q / Esc  → quit
 """
 import curses
-import glob
 import os
 import subprocess
 import time
@@ -43,11 +42,6 @@ COMPONENTS = [
         'log'   : os.path.join(LOG_DIR, 'openpilot_current.log'),
         'pgrep' : 'manager.py',
     },
-    {
-        'name'  : 'IMU Monitor',
-        'log'   : os.path.join(LOG_DIR, 'monitor_current.log'),
-        'pgrep' : 'monitor_imu.py',
-    },
 ]
 
 # Keywords that highlight a log line in yellow
@@ -70,16 +64,8 @@ def is_running(pattern: str) -> bool:
 
 
 def resolve_log(comp: dict) -> str | None:
-    """Return the best available log path for a component."""
-    path = comp['log']
-    if path and os.path.exists(path) and os.path.getsize(path) > 0:
-        return path
-    # Fallback: latest timestamped IMU log
-    if comp['name'] == 'IMU Monitor':
-        files = glob.glob(os.path.join(LOG_DIR, 'monitor_imu_*.log'))
-        if files:
-            return max(files, key=os.path.getmtime)
-    return path   # may not exist yet — caller handles that
+    """Return the log path for a component (may not exist yet — caller handles that)."""
+    return comp['log']
 
 
 def tail_file(path: str | None, n: int) -> list[str]:

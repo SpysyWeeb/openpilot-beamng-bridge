@@ -309,21 +309,6 @@ def make_components(dual_camera: bool = False) -> list[dict]:
             'ready_timeout' : 60,
             'ready_delay'   : 5.0,
         },
-        {
-            'id'            : 'imu_monitor',
-            'name'          : 'IMU Monitor',
-            'desc'          : 'sensor diagnostics',
-            'pgrep'         : 'monitor_imu.py',
-            'stop_pat'      : 'monitor_imu.py',
-            'log_path'      : os.path.join(LOG_DIR, 'monitor_current.log'),
-            'log_clear'     : True,
-            'launch_cmd'    : _db(
-                f"exec python3 '{SCRIPT_DIR}/tools/monitor_imu.py'"
-                f" --log-dir '{LOG_DIR}'"),
-            'ready'         : 'process',
-            'ready_timeout' : 30,
-            'ready_delay'   : 2.0,
-        },
     ]
 
 
@@ -996,25 +981,25 @@ class BridgeWindow(Gtk.ApplicationWindow):
             return
 
         # ── BeamNG sequence ─────────────────────────────────────────────────────
-        # 1 / 4 — BeamNG
+        # 1 / 3 — BeamNG
         c = self._comp('beamng')
         if not _pgrep(c['pgrep']):
-            st('1/4 — Launching BeamNG...')
+            st('1/3 — Launching BeamNG...')
             launch(c)
-            st(f"1/4 — Waiting for BeamNG  (up to {c['ready_timeout']} s)...")
+            st(f"1/3 — Waiting for BeamNG  (up to {c['ready_timeout']} s)...")
             if not wait_proc(c['pgrep'], c['ready_timeout'], c['ready_delay']):
                 done('ERROR: BeamNG did not start — check logs.'); return
         else:
-            st('1/4 — BeamNG already running, skipping.')
+            st('1/3 — BeamNG already running, skipping.')
         if cancel.is_set():
             done(); return
 
-        # 2 / 4 — Bridge
+        # 2 / 3 — Bridge
         c = self._comp('bridge')
         if not _pgrep(c['pgrep']):
-            st('2/4 — Launching Bridge  (scenario load: 60–120 s)...')
+            st('2/3 — Launching Bridge  (scenario load: 60–120 s)...')
             launch(c)
-            st(f"2/4 — Waiting for sensors  (up to {c['ready_timeout']} s)...")
+            st(f"2/3 — Waiting for sensors  (up to {c['ready_timeout']} s)...")
             if not wait_sentinel(READY_FILE, c['ready_timeout']):
                 done('ERROR: Bridge sensors never went live — check logs.'); return
             try:
@@ -1022,30 +1007,20 @@ class BridgeWindow(Gtk.ApplicationWindow):
             except FileNotFoundError:
                 pass
         else:
-            st('2/4 — Bridge already running, skipping.')
+            st('2/3 — Bridge already running, skipping.')
         if cancel.is_set():
             done(); return
 
-        # 3 / 4 — openpilot
+        # 3 / 3 — openpilot
         c = self._comp('openpilot')
         if not _pgrep(c['pgrep']):
-            st('3/4 — Launching openpilot...')
+            st('3/3 — Launching openpilot...')
             launch(c)
-            st(f"3/4 — Waiting for manager  (up to {c['ready_timeout']} s)...")
+            st(f"3/3 — Waiting for manager  (up to {c['ready_timeout']} s)...")
             if not wait_proc(c['pgrep'], c['ready_timeout'], c['ready_delay']):
                 done('ERROR: openpilot did not start — check logs.'); return
         else:
-            st('3/4 — openpilot already running, skipping.')
-        if cancel.is_set():
-            done(); return
-
-        # 4 / 4 — IMU Monitor
-        c = self._comp('imu_monitor')
-        if not _pgrep(c['pgrep']):
-            st('4/4 — Launching IMU Monitor...')
-            launch(c)
-        else:
-            st('4/4 — IMU Monitor already running, skipping.')
+            st('3/3 — openpilot already running, skipping.')
 
         done('All components launched!')
 

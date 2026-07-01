@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-IMU message-rate monitor. Started automatically by start.sh.
+IMU message-rate monitor — standalone diagnostic tool. No longer auto-started
+by the control panel; run it manually when debugging sensor delivery.
 
 Waits for the bridge to create the accelerometer/gyroscope shared-memory
 publishers (which only exist after BeamNG has loaded and the bridge is
