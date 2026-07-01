@@ -10,5 +10,12 @@
 
 BEAMNG_BIN="/home/alex/.local/share/Steam/steamapps/common/BeamNG.drive/BinLinux/BeamNG.drive.x64"
 
-echo "[BeamNG] Launching (nice +10): $BEAMNG_BIN -nosteam -tcom -tport 64256"
+# nocompute: keep BeamNG off the GPU's async-compute queues. The 2026-07-01
+# system crash was an unrecoverable hang on compute ring comp_1.0.1 where the
+# game's async-compute work cohabited with tinygrad's model queues (RDNA4
+# MES). Collapsing the game onto the gfx ring shrinks that collision surface;
+# costs BeamNG a few % render performance.
+export RADV_DEBUG="${RADV_DEBUG:+$RADV_DEBUG,}nocompute"
+
+echo "[BeamNG] Launching (nice +10, RADV nocompute): $BEAMNG_BIN -nosteam -tcom -tport 64256"
 exec nice -n 10 "$BEAMNG_BIN" -nosteam -tcom -tport 64256
