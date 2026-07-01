@@ -86,6 +86,7 @@ class BeamNGBridge(SimulatorBridge):
 
         # Local state — kept here rather than on self so common.py stays unmodified.
         pending_reengage   = False
+        _controls_active   = False   # whether we drove BeamNG last frame
         _last_watchdog     = time.monotonic()
         _driver_mode       = False   # Option B: stop sending controls, let player drive in BeamNG
         _pending_spd_presses = 0     # remaining cruise button presses for cruise_speed_X
@@ -223,8 +224,21 @@ class BeamNGBridge(SimulatorBridge):
                     if self.simulator_state.cruise_button == 0:
                         self.simulator_state.cruise_button = CruiseButtons.CANCEL
             else:
-                self.world.apply_controls(steer_out, throttle_out, brake_out,
-                                           engaged=self.simulator_state.is_engaged)
+                # Only drive BeamNG while openpilot is engaged or a manual FIFO
+                # input is active.  Sending zeros every frame overrides the
+                # player's native BeamNG inputs, which made hand-driving feel
+                # like controls were being dropped.
+                _want_control = (self.simulator_state.is_engaged
+                                 or steer_manual != 0 or throttle_manual != 0
+                                 or brake_manual != 0)
+                if _want_control:
+                    self.world.apply_controls(steer_out, throttle_out, brake_out,
+                                              engaged=self.simulator_state.is_engaged)
+                    _controls_active = True
+                elif _controls_active:
+                    # One neutral command on release so throttle/steer don't stick.
+                    self.world.apply_controls(0.0, 0.0, 0.0, engaged=False)
+                    _controls_active = False
 
             self.world.read_state()
             self.world.read_sensors(self.simulator_state)
