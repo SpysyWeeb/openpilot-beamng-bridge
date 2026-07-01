@@ -154,7 +154,9 @@ def _setup_scenario(bng, dual_camera):
         is_visualised=False,
         is_streaming=True,
         is_using_shared_memory=True,
-        requested_update_time=0.01,   # target 100 fps; BeamNG clamps to its render rate
+        requested_update_time=0.05,   # 20 Hz — matches modeld's consumption; 0.01 made
+                                      # BeamNG render both 1928×1208 sensor cams ~100/s,
+                                      # starving modeld's CPU inference below 20 Hz
     )
     camera_wide = None
     if dual_camera:
@@ -171,7 +173,7 @@ def _setup_scenario(bng, dual_camera):
             is_visualised=False,
             is_streaming=True,
             is_using_shared_memory=True,
-            requested_update_time=0.01,
+            requested_update_time=0.05,   # 20 Hz — see road cam note above
         )
 
     dual_str = "dual" if dual_camera else "single"

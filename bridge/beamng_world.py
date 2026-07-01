@@ -432,7 +432,7 @@ class BeamNGWorld(World):
             near_far_planes=(0.1, 1500.0),
             is_render_annotations=False, is_render_depth=False,
             is_visualised=False, is_streaming=True,
-            is_using_shared_memory=True, requested_update_time=0.01,
+            is_using_shared_memory=True, requested_update_time=0.05,
         )
         with self._cam_lock:
             try:
