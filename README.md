@@ -62,6 +62,7 @@ A BeamNG.tech license can be obtained from [BeamNG's website](https://www.beamng
 - **beamngpy** installed into openpilot's venv inside the distrobox (`uv pip install --python ~/openpilot/.venv/bin/python beamngpy`)
 - **GTK4 / PyGObject on the host** — the control panel runs on the Bazzite host, not in the distrobox
 - **Audio libs in the distrobox** for openpilot's alert sounds (`soundd`): `sudo apt install libportaudio2 libasound2-plugins`, plus an `/etc/asound.conf` routing ALSA's default device to Pulse (`pcm.!default pulse` / `ctl.!default pulse`) so audio reaches the host's PipeWire
+- **AMD GPU model (strongly recommended):** openpilot's build compiles the driving model for CPU (its device list is CUDA/QCOM/CPU only), which cannot hold 20 Hz while BeamNG runs — the resulting frame drops cascade into `commIssue` disengagements. Run `python3 tools/build_model_gpu.py` inside the distrobox to recompile the model for the AMD GPU (build artifacts only; openpilot source untouched). Measured: 20.0 Hz idle and 19.5 Hz under full CPU load, vs 13–14 Hz for the CPU model under game load. **Re-run this after any `scons`/`op build`/openpilot update**, which reverts the model to CPU.
 
 ---
 
