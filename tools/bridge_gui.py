@@ -549,8 +549,6 @@ class BridgeWindow(Gtk.ApplicationWindow):
         self._controls_popover = None
         self._driver_mode_on   = False
         self._speed_spin       = None
-        self._road_fov_scale   = None
-        self._wide_fov_scale   = None
         if self._mode == MODE_BEAMNG and 'bridge' in self._cw:
             self._controls_popover = self._build_controls_popover()
             menu_btn = Gtk.MenuButton()
@@ -815,36 +813,6 @@ class BridgeWindow(Gtk.ApplicationWindow):
         speed_row.append(go_btn)
         content.append(speed_row)
 
-        # ── Camera FOV ────────────────────────────────────────────────────────
-        content.append(_sep())
-        content.append(_label('Camera FOV', 'cname'))
-
-        road_lbl = Gtk.Label(label=f'Road: {25.7:.1f}°')
-        road_lbl.set_halign(Gtk.Align.START)
-        road_lbl.set_margin_top(4)
-        content.append(road_lbl)
-
-        self._road_fov_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 5.0, 60.0, 0.5)
-        self._road_fov_scale.set_value(25.69)
-        self._road_fov_scale.set_hexpand(True)
-        self._road_fov_scale.set_draw_value(False)
-        self._road_fov_scale.connect('value-changed',
-                                     lambda s: self._on_fov_change('road', s, road_lbl))
-        content.append(self._road_fov_scale)
-
-        wide_lbl = Gtk.Label(label=f'Wide: {94.7:.1f}°')
-        wide_lbl.set_halign(Gtk.Align.START)
-        wide_lbl.set_margin_top(4)
-        content.append(wide_lbl)
-
-        self._wide_fov_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 40.0, 120.0, 0.5)
-        self._wide_fov_scale.set_value(94.68)
-        self._wide_fov_scale.set_hexpand(True)
-        self._wide_fov_scale.set_draw_value(False)
-        self._wide_fov_scale.connect('value-changed',
-                                     lambda s: self._on_fov_change('wide', s, wide_lbl))
-        content.append(self._wide_fov_scale)
-
         # ── Driver Override ───────────────────────────────────────────────────
         content.append(_sep())
         content.append(_label('Driver Override', 'cname'))
@@ -862,11 +830,6 @@ class BridgeWindow(Gtk.ApplicationWindow):
             return
         mph = int(self._speed_spin.get_value())
         self._send_cmd(f'cruise_speed_{mph}')
-
-    def _on_fov_change(self, cam: str, scale: Gtk.Scale, lbl: Gtk.Label) -> None:
-        val = scale.get_value()
-        lbl.set_label(f'{"Road" if cam == "road" else "Wide"}: {val:.1f}°')
-        self._send_cmd(f'fov_{cam}_{val:.1f}')
 
     def _on_driver_mode_toggle(self) -> None:
         self._driver_mode_on = not self._driver_mode_on

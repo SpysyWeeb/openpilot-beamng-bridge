@@ -51,8 +51,13 @@ SPAWN_ROT_QUAT = (0.0, 0.0, -0.9272, 0.3746)
 CAM_POS = (0.0, -0.4, 1.22)
 CAM_DIR = (0.0, -1.0, 0.0)
 CAM_UP  = (0.0,  0.0, 1.0)
-CAM_FOV      = 25.69   # vertical FOV matching openpilot road cam focal length 2648px @ 1208h
-CAM_WIDE_FOV = 94.68  # vertical FOV matching openpilot wide cam focal length 567px @ 1208h
+# Vertical FOVs derived from openpilot's pinhole intrinsics for the sim device
+# (DEVICE_CAMERAS[("pc","unknown")] = _ar_ox_config): FOV_y = 2*atan(h / (2*f)).
+CAM_FOV      = 25.70   # road cam:  f=2648 px @ 1928x1208 → 2*atan(604/2648)
+CAM_WIDE_FOV = 93.62   # wide cam:  f=567 px  @ 1928x1208 → 2*atan(604/567)
+# NOTE: the real comma wide cam is a fisheye; 567 px is openpilot's own pinhole
+# approximation (upstream comments call it inconsistent across the frame).
+# BeamNG renders pinhole only, so matching the pinhole equivalent is optimal.
 
 W, H = 1928, 1208
 CAM_RENDER_W = W

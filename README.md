@@ -80,11 +80,11 @@ A BeamNG.tech license can be obtained from [BeamNG's website](https://www.beamng
   - Cruise control buttons (MAIN, CANCEL, SET▼, RES▲) for engaging openpilot
   - Set Speed input — ramps openpilot's cruise speed to a target mph via button presses
   - Driver Override toggle — stops sending openpilot commands to BeamNG so the player can drive; brake auto-cancels cruise
-  - Road and wide camera FOV sliders for live tuning (hot-swaps BeamNG cameras without restart)
+- Camera FOVs are locked to openpilot's pinhole intrinsics (road 25.70°, wide 93.62° vertical — see `linux/beamng_setup.py`); a `fov_road_<deg>` / `fov_wide_<deg>` FIFO command remains for experiments
 - MetaDrive mode (`--metadrive` flag / `start_metadrive.sh`) for running the stock openpilot MetaDrive bridge as a comparison baseline
 
 ### Bridge Command FIFO (Option A plumbing)
-The bridge listens on a named pipe (`/tmp/beamng_bridge_cmd`) for control commands. The GTK panel uses it for the cruise buttons, set-speed ramp, driver mode, and FOV sliders. The bridge additionally accepts `steer_<v>`, `throttle_<v>`, `brake_<v>`, `blinker_left`/`blinker_right`, `ignition`, and `reset` — **no controller daemon ships with the repo yet**, so these fire only if something writes them to the FIFO (e.g. `echo brake_1.0 > /tmp/beamng_bridge_cmd`). When a manual steer/throttle/brake value is present it takes priority over openpilot's commands, and manual braking cancels longitudinal cruise. These commands are the seed of the future translation layer (ignition, blinkers, driver inputs as a real car would report them).
+The bridge listens on a named pipe (`/tmp/beamng_bridge_cmd`) for control commands. The GTK panel uses it for the cruise buttons, set-speed ramp, and driver mode. The bridge additionally accepts `steer_<v>`, `throttle_<v>`, `brake_<v>`, `blinker_left`/`blinker_right`, `ignition`, `reset`, and `fov_road_<deg>`/`fov_wide_<deg>` — **no controller daemon ships with the repo yet**, so these fire only if something writes them to the FIFO (e.g. `echo brake_1.0 > /tmp/beamng_bridge_cmd`). When a manual steer/throttle/brake value is present it takes priority over openpilot's commands, and manual braking cancels longitudinal cruise. These commands are the seed of the future translation layer (ignition, blinkers, driver inputs as a real car would report them).
 
 ### Driver Mode (Option B)
 A full driver takeover mode that stops forwarding any openpilot commands to BeamNG, returning full control to the player. Physical braking while in this mode sends a cruise CANCEL to openpilot.
