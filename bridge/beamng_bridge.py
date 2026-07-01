@@ -1,9 +1,20 @@
 import functools
+import math
 import os
 import time
 import numpy as np
 
 ENGAGED_FILE = '/tmp/beamng_bridge_engaged'
+
+# ── Control translation constants (Bastion plant model) ───────────────────
+# openpilot's torque controller expects a car where full |torque| buys a
+# bounded amount of lateral acceleration, not full steering lock.
+MAX_LAT_ACCEL      = 3.0   # m/s² of lateral authority at full |torque| (Civic-ish)
+WHEELBASE_M        = 2.9   # Bastion wheelbase
+STEER_RATIO        = 13.0  # handwheel deg per road-wheel deg (495° lock ≈ 38° road)
+LAT_V_MIN          = 4.5   # m/s — below this the bicycle model would exceed full lock
+MAX_THROTTLE_ACCEL = 4.0   # m/s² accel request that maps to 100% throttle
+MAX_BRAKE_DECEL    = 8.0   # m/s² decel request that maps to 100% brake
 
 from multiprocessing import Queue
 
@@ -125,8 +136,11 @@ class BeamNGBridge(SimulatorBridge):
                             # cruise_speed_45 → ramp cruise to 45 mph via delta button presses
                             try:
                                 target_mph = float(m[2])
-                                v_cruise_kph = self.simulated_car.sm['controlsState'].vCruise
-                                v_cruise_mph = v_cruise_kph / 1.609
+                                # controlsState.vCruise no longer exists on new
+                                # masters; hudControl.setSpeed (m/s) is the set
+                                # speed as controlsd reports it.
+                                v_cruise_ms = self.simulated_car.sm['carControl'].hudControl.setSpeed
+                                v_cruise_mph = v_cruise_ms * 2.2369
                                 delta = int(round(target_mph - v_cruise_mph))
                                 if delta != 0:
                                     _pending_spd_presses = abs(delta)
@@ -172,13 +186,20 @@ class BeamNGBridge(SimulatorBridge):
 
             if self.simulator_state.is_engaged:
                 act = self.simulated_car.sm['carControl'].actuators
-                throttle_op = np.clip(act.accel / 1.6, 0.0, 1.0)
-                brake_op    = np.clip(-act.accel / 4.0, 0.0, 1.0)
+                throttle_op = np.clip(act.accel / MAX_THROTTLE_ACCEL, 0.0, 1.0)
+                brake_op    = np.clip(-act.accel / MAX_BRAKE_DECEL, 0.0, 1.0)
 
-                # Honda Civic 2022 is torque-controlled. Scale ±1 torque to a wheel
-                # angle; beamng_world.apply_controls() divides by MAX_STEER_DEG,
-                # cancelling it back to BeamNG's ±1 steering input.
-                steer_op = act.torque * MAX_STEER_DEG
+                # Torque → wheel angle via the bicycle model so plant gain falls
+                # with speed like a real EPS-limited car: full torque buys
+                # MAX_LAT_ACCEL of lateral accel, angle = a_lat·L/v² · SR.
+                # The old fixed ±1 → ±MAX_STEER_DEG mapping meant full lock at
+                # ANY speed — the torque controller saw an absurdly hot plant
+                # and railed ±1 while the model asked for curv ≈ 0.
+                v = max(self.simulator_state.speed, LAT_V_MIN)
+                lat_accel = act.torque * MAX_LAT_ACCEL
+                steer_op = float(np.clip(
+                    math.degrees(lat_accel * WHEELBASE_M / (v * v)) * STEER_RATIO,
+                    -MAX_STEER_DEG, MAX_STEER_DEG))
 
             # ── Cruise speed ramp (one press per frame when pending) ───────────
             # Only fire if no other button event claimed this frame.

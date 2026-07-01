@@ -23,7 +23,8 @@ except ImportError:
     import cereal.messaging as messaging             # legacy layout (older trees / forks)
 
 SERVICES = ['livePose', 'liveCalibration', 'liveDelay', 'liveParameters',
-            'liveTorqueParameters', 'selfdriveState', 'carState']
+            'liveTorqueParameters', 'selfdriveState', 'carState',
+            'longitudinalPlan', 'radarState']
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--log-dir', default=os.path.join(os.path.dirname(__file__), '..', 'logs'))
@@ -64,9 +65,14 @@ while True:
     lp = sm['livePose']
     cal = sm['liveCalibration']
     sd = sm['selfdriveState']
+    car = sm['carState']
+    plan = sm['longitudinalPlan']
+    lead = sm['radarState'].leadOne
     emit(
         f'{bad:<60s} | livePose: inputsOK={bool(lp.inputsOK)} sensorsOK={bool(lp.sensorsOK)} '
         f'posenetOK={bool(lp.posenetOK)} angVelValid={bool(lp.angularVelocityDevice.valid)} '
         f'| cal: status={cal.calStatus} perc={cal.calPerc}% '
-        f'| enabled={bool(sd.enabled)} active={bool(sd.active)} vEgo={sm["carState"].vEgo:.1f}'
+        f'| enabled={bool(sd.enabled)} active={bool(sd.active)} vEgo={car.vEgo:.1f} '
+        f'| vCruise={car.vCruise:.0f}kph aTarget={plan.aTarget:+.2f} '
+        f'lead={bool(lead.status)} dRel={lead.dRel:.0f}m'
     )
