@@ -25,6 +25,16 @@ sys.path.insert(0, os.path.expanduser(os.environ.get('OPENPILOT_DIR', '~/openpil
 import numpy as np
 from PIL import Image, ImageDraw
 
+# Layout compat: root-layout trees (release branches) have cereal at the repo
+# root and no openpilot.cereal — alias it so both layouts work.
+try:
+    import openpilot.cereal.messaging  # noqa: F401
+except ModuleNotFoundError:
+    import cereal as _cereal
+    import openpilot as _openpilot
+    sys.modules['openpilot.cereal'] = _cereal
+    _openpilot.cereal = _cereal
+
 import openpilot.cereal.messaging as messaging
 from msgq.visionipc import VisionIpcClient, VisionStreamType
 from openpilot.common.transformations.camera import DEVICE_CAMERAS, view_frame_from_device_frame
