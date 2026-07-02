@@ -8,10 +8,19 @@ releases image_lock whenever a new frame arrives, following the same
 semaphore pattern as the MetaDrive bridge.
 """
 import math
+import os
 import threading
 import time
 
 import numpy as np
+
+# BeamNG renders razor-sharp aliased textures (asphalt moire/dither) that no
+# real camera optics produce — real lenses low-pass everything, and the model
+# is trained on real footage. Reference: on-device logs show laneLineProbs
+# peaking at 0.98 on real roads vs ≤0.05 on our crisp frames. The half-res
+# round trip reproduces the June-era 964x604→2x pipeline the model behaved
+# better on. Disable with BRIDGE_SOFTEN=0.
+SOFTEN = os.environ.get('BRIDGE_SOFTEN', '1') != '0'
 
 from beamngpy import BeamNGpy, Vehicle
 from beamngpy.sensors import Camera, AdvancedIMU, Electrics
@@ -220,15 +229,22 @@ class BeamNGWorld(World):
 
     @staticmethod
     def _to_rgb(colour) -> np.ndarray:
-        """Return a uint8 (H, W, 3) RGB array from a beamngpy colour frame."""
+        """Return a uint8 (H, W, 3) RGB array from a beamngpy colour frame,
+        optionally softened (see SOFTEN note at top of file)."""
         from PIL import Image as _PILImage
         if isinstance(colour, _PILImage.Image):
-            return np.array(colour.convert('RGB'), dtype=np.uint8)
+            img = colour.convert('RGB')
+        else:
+            arr = np.asarray(colour)
+            if arr.ndim == 3 and arr.shape[2] == 4:
+                arr = arr[:, :, :3]
+            img = _PILImage.fromarray(np.ascontiguousarray(arr, dtype=np.uint8))
 
-        arr = np.asarray(colour)
-        if arr.ndim == 3 and arr.shape[2] == 4:
-            return arr[:, :, :3].copy()
-        return np.array(arr, dtype=np.uint8)
+        if SOFTEN:
+            w, h = img.size
+            img = img.resize((w // 2, h // 2), _PILImage.BILINEAR) \
+                     .resize((w, h), _PILImage.BILINEAR)
+        return np.array(img, dtype=np.uint8)
 
     def _control_loop(self):
         """Send queued control commands to BeamNG in a dedicated thread.

@@ -30,8 +30,14 @@ from openpilot.selfdrive.modeld.constants import ModelConstants                 
 from openpilot.selfdrive.modeld.helpers import TG_INPUT_DEVICES_PATH, modeld_pkl_path          # noqa: E402
 
 DEV = os.environ.get('MODEL_DEV', 'AMD')
-# JIT_BATCH_SIZE=0 + FLOAT16=1 mirror comma's own AMD (usbgpu) tinygrad flags
-EXTRA = os.environ.get('MODEL_EXTRA_FLAGS', 'FLOAT16=1 JIT_BATCH_SIZE=0' if DEV == 'AMD' else '')
+# Optional split: run the frame warp on a different device than the model
+# (comma's usbgpu does WARP on the SoC, model on AMD). Baked in at compile
+# time — a runtime-only mix crashes with "args mismatch in JIT".
+WARP = os.environ.get('MODEL_WARP_DEV', '')
+# JIT_BATCH_SIZE=0 mirrors comma's own AMD (usbgpu) tinygrad flags
+EXTRA = os.environ.get('MODEL_EXTRA_FLAGS', 'JIT_BATCH_SIZE=0' if DEV == 'AMD' else '')
+if WARP:
+    EXTRA = f'{EXTRA} WARP_DEV={WARP}'.strip()
 
 modeld_dir = os.path.join(OP, 'openpilot/selfdrive/modeld')
 onnx = os.path.join(modeld_dir, 'models/driving_supercombo.onnx')
@@ -67,9 +73,10 @@ print(f'[build_model_gpu] chunked into {len(targets)} chunk(s)', flush=True)
 # NB: DEV can be a compile spec like "CPU:LLVM"; the runtime Device[] name is
 # just the backend ("CPU") — scons writes tg_backend here, not tg_flags.
 runtime_dev = DEV.split(':')[0]
+runtime_warp = (WARP or runtime_dev).split(':')[0]
 with open(TG_INPUT_DEVICES_PATH) as f:
     devices = json.load(f)
-devices['openpilot.selfdrive.modeld.modeld']['default'] = {'WARP_DEV': runtime_dev, 'QUEUE_DEV': runtime_dev}
+devices['openpilot.selfdrive.modeld.modeld']['default'] = {'WARP_DEV': runtime_warp, 'QUEUE_DEV': runtime_dev}
 with open(TG_INPUT_DEVICES_PATH, 'w') as f:
     json.dump(devices, f)
     f.write('\n')
