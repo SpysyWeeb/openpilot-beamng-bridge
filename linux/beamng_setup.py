@@ -48,7 +48,11 @@ DUAL_CAMERA   = os.environ.get("DUAL_CAMERA",  "0") == "1"
 SPAWN_POS      = (-829.5, -499.0, 106.8)
 SPAWN_ROT_QUAT = (0.0, 0.0, -0.9272, 0.3746)
 
-CAM_POS = (0.0, -0.4, 1.22)
+# Windshield-top mount, tuned live via the campos FIFO command 2026-07-01.
+# The old (0.0, -0.4, 1.22) sat mid-cabin: the wide cam — the model's PRIMARY
+# perception input — saw ~45% dashboard/gauges. This position gives a real
+# ecam-style view: road + horizon centered + ~20% hood at the bottom.
+CAM_POS = (0.0, -1.45, 1.38)
 CAM_DIR = (0.0, -1.0, 0.0)
 CAM_UP  = (0.0,  0.0, 1.0)
 # Vertical FOVs derived from openpilot's pinhole intrinsics for the sim device
