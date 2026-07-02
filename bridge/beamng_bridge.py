@@ -12,7 +12,10 @@ ENGAGED_FILE = '/tmp/beamng_bridge_engaged'
 MAX_LAT_ACCEL      = 3.0   # m/s² of lateral authority at full |torque| (Civic-ish)
 WHEELBASE_M        = 2.9   # Bastion wheelbase
 STEER_RATIO        = 13.0  # handwheel deg per road-wheel deg (495° lock ≈ 38° road)
-LAT_V_MIN          = 4.5   # m/s — below this the bicycle model would exceed full lock
+LAT_V_MIN          = 9.0   # m/s — gain clamp: below this, use this speed in the
+                           # bicycle model. At 4.5 the low-speed plant gain allowed
+                           # 300°+ wheel swings (observed flailing under 10 mph);
+                           # 9.0 caps full-torque authority near ±85° wheel.
 MAX_THROTTLE_ACCEL = 4.0   # m/s² accel request that maps to 100% throttle
 MAX_BRAKE_DECEL    = 8.0   # m/s² decel request that maps to 100% brake
 
