@@ -63,10 +63,13 @@ targets = get_chunk_targets(pkl, 1.2 * onnx_size + 10 * 1024 * 1024)
 chunk_file(pkl, targets)
 print(f'[build_model_gpu] chunked into {len(targets)} chunk(s)', flush=True)
 
-# point modeld's runtime input devices at the same backend
+# point modeld's runtime input devices at the same backend.
+# NB: DEV can be a compile spec like "CPU:LLVM"; the runtime Device[] name is
+# just the backend ("CPU") — scons writes tg_backend here, not tg_flags.
+runtime_dev = DEV.split(':')[0]
 with open(TG_INPUT_DEVICES_PATH) as f:
     devices = json.load(f)
-devices['openpilot.selfdrive.modeld.modeld']['default'] = {'WARP_DEV': DEV, 'QUEUE_DEV': DEV}
+devices['openpilot.selfdrive.modeld.modeld']['default'] = {'WARP_DEV': runtime_dev, 'QUEUE_DEV': runtime_dev}
 with open(TG_INPUT_DEVICES_PATH, 'w') as f:
     json.dump(devices, f)
     f.write('\n')
