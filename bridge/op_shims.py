@@ -28,8 +28,18 @@ def patch_camerad_timestamps() -> None:
     # Mirrors Camerad._send_yuv() with eof = frame_id * 0.05 * 1e9 replaced
     # by the real clock.  Method-level patch so it applies regardless of how
     # callers imported the Camerad class.
+    #
+    # The road and wide sends of the same frame pair must carry the SAME
+    # timestamp: modeld pairs main/extra frames by timestamp_sof and logs
+    # "frames out of sync!" beyond 10 ms skew, and the wide frame's
+    # rgb_to_nv12 conversion between the two sends costs ~12 ms.  Stamp the
+    # clock once per frame_id (first send takes it, the paired send reuses).
     def _send_yuv(self, yuv, frame_id, pub_type, yuv_type):
-        eof = time.monotonic_ns()
+        ts_frame_id, ts = getattr(self, '_op_shim_ts', (None, None))
+        if ts_frame_id != frame_id:
+            ts = time.monotonic_ns()
+            self._op_shim_ts = (frame_id, ts)
+        eof = ts
         self.vipc_server.send(yuv_type, yuv, frame_id, eof, eof)
 
         dat = messaging.new_message(pub_type, valid=True)
