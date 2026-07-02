@@ -11,8 +11,9 @@ coherent)?
 Run inside the distrobox while the stack is up:
     python3 tools/model_viz.py [--out /tmp/model_viz.png]
 
-Model frame is [x fwd, y left, z up] relative to the calibrated camera;
-device frame is [fwd, right, down], so device = (x, -y, -z).
+Empirically verified conventions (laneLines order far-left..far-right maps to
+y = -4.4..+4.5): model frame is [x fwd, y RIGHT, z up-from-road-plane], and
+the camera sits CAM_HEIGHT above that plane — device = (x, y, height - z).
 """
 import argparse
 import os
@@ -31,10 +32,13 @@ from openpilot.common.transformations.camera import DEVICE_CAMERAS, view_frame_f
 W, H = 1928, 1208
 
 
+CAM_HEIGHT = 1.22  # the model's assumed camera height above the road plane
+
+
 def project(K, pts_model):
     """Model-frame Nx3 -> Nx2 pixels (NaN when behind camera)."""
     pts = np.asarray(pts_model, dtype=float)
-    dev = np.stack([pts[:, 0], -pts[:, 1], -pts[:, 2]], axis=1)   # [F,L,U] -> [F,R,D]
+    dev = np.stack([pts[:, 0], pts[:, 1], CAM_HEIGHT - pts[:, 2]], axis=1)  # -> [F,R,D]
     view = dev @ view_frame_from_device_frame.T                    # -> [R,D,F]
     with np.errstate(divide='ignore', invalid='ignore'):
         uv = (view[:, :2] / view[:, 2:3])
@@ -90,12 +94,38 @@ def main():
 
     lead = sm['radarState'].leadOne
     if lead.status:
-        px = project(K, [[float(lead.dRel), float(-lead.yRel), 0.0]])[0]
+        px = project(K, [[float(lead.dRel), float(lead.yRel), 0.0]])[0]
         if np.isfinite(px).all():
             u, v = px
             d.rectangle([u - 25, v - 25, u + 25, v + 25], outline=(80, 160, 255), width=4)
 
-    img.save(args.out)
+    # ── top-down panel (x: 0..80m up the panel, y: ±14m across) ───────────
+    TD_W, TD_H, SCALE = 420, 1208, 14.0  # px, px, px per meter
+    td = Image.new('RGB', (TD_W, TD_H), (18, 18, 28))
+    dtd = ImageDraw.Draw(td)
+
+    def td_px(pts):
+        pts = np.asarray(pts, dtype=float)
+        u = TD_W / 2 + pts[:, 1] * SCALE
+        v = TD_H - 20 - pts[:, 0] * SCALE
+        return list(zip(u.tolist(), v.tolist()))
+
+    for gx in range(0, 81, 10):  # range rings
+        vv = TD_H - 20 - gx * SCALE
+        dtd.line([(0, vv), (TD_W, vv)], fill=(45, 45, 60), width=1)
+        dtd.text((4, vv - 12), f'{gx}m', fill=(110, 110, 130))
+    for edge in m.roadEdges:
+        dtd.line(td_px(xyz(edge)), fill=(255, 60, 60), width=3)
+    for ll in m.laneLines:
+        dtd.line(td_px(xyz(ll)), fill=(255, 220, 40), width=2)
+    dtd.line(td_px(xyz(m.position)), fill=(60, 255, 90), width=5)
+    dtd.polygon([(TD_W/2 - 8, TD_H - 8), (TD_W/2 + 8, TD_H - 8),
+                 (TD_W/2, TD_H - 30)], fill=(200, 200, 255))  # ego
+
+    combined = Image.new('RGB', (img.width + TD_W, max(img.height, TD_H)))
+    combined.paste(img, (0, 0))
+    combined.paste(td, (img.width, 0))
+    combined.save(args.out)
 
     pos = xyz(m.position)
     lls = [round(float(np.array(ll.y)[0]), 2) for ll in m.laneLines]

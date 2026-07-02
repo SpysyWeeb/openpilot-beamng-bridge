@@ -45,7 +45,41 @@ def patch_camerad_timestamps() -> None:
     _camerad.Camerad._send_yuv = _send_yuv
 
 
+def patch_camerad_colors() -> None:
+    """Stock tools/sim rgb_to_nv12 halves chroma amplitude: luma uses
+    half-scale coefficients with >>7, but chroma uses half-scale coefficients
+    with >>8 — 50% desaturation. The model is trained on full-color road
+    footage and the UI feed looks visibly gray. Replace with full-range
+    BT.601 (matches real-device ISP output). Upstream PR candidate."""
+    import numpy as np
+
+    def rgb_to_nv12_fullrange(rgb):
+        h, w = rgb.shape[:2]
+        r = rgb[:, :, 0].astype(np.int32)
+        g = rgb[:, :, 1].astype(np.int32)
+        b = rgb[:, :, 2].astype(np.int32)
+
+        y = (77 * r + 150 * g + 29 * b + 128) >> 8          # 0.299/0.587/0.114
+        y = np.clip(y, 0, 255).astype(np.uint8)
+
+        r_s = (r[0::2, 0::2] + r[0::2, 1::2] + r[1::2, 0::2] + r[1::2, 1::2] + 2) >> 2
+        g_s = (g[0::2, 0::2] + g[0::2, 1::2] + g[1::2, 0::2] + g[1::2, 1::2] + 2) >> 2
+        b_s = (b[0::2, 0::2] + b[0::2, 1::2] + b[1::2, 0::2] + b[1::2, 1::2] + 2) >> 2
+        y_s = (77 * r_s + 150 * g_s + 29 * b_s + 128) >> 8
+
+        u = np.clip(((b_s - y_s) * 144 >> 8) + 128, 0, 255).astype(np.uint8)  # 0.564
+        v = np.clip(((r_s - y_s) * 183 >> 8) + 128, 0, 255).astype(np.uint8)  # 0.713
+
+        uv = np.empty((h // 2, w), dtype=np.uint8)
+        uv[:, 0::2] = u
+        uv[:, 1::2] = v
+        return np.concatenate([y.ravel(), uv.ravel()]).tobytes()
+
+    _camerad.rgb_to_nv12 = rgb_to_nv12_fullrange
+
+
 def apply() -> None:
     """Apply all shims. Call once, before SimulatedSensors is constructed."""
     patch_camerad_timestamps()
-    print('[op_shims] camerad timestamps patched to real monotonic time', flush=True)
+    patch_camerad_colors()
+    print('[op_shims] camerad patched: real monotonic timestamps + full-range color', flush=True)
