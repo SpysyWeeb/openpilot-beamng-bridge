@@ -467,8 +467,11 @@ class BeamNGWorld(World):
         with self._cam_lock:
             try:
                 self.camera.remove()
-            except Exception:
-                pass
+            except Exception as exc:
+                # A failed remove LEAKS a full-res streaming camera that renders
+                # forever — suspected cause of the 19:00 GPU-load runaway/wedge.
+                print(f'[BeamNGWorld] WARNING: road cam remove FAILED ({exc}) — '
+                      f'old camera may still be rendering!', flush=True)
             self.camera = _Camera('road_cam', self.bng, self.vehicle,
                                   field_of_view_y=self._road_fov, **_cam_kwargs)
             print(f'[BeamNGWorld] Road cam FOV → {self._road_fov:.1f}°', flush=True)
@@ -476,8 +479,9 @@ class BeamNGWorld(World):
             if self.camera_wide is not None and self._wide_fov is not None:
                 try:
                     self.camera_wide.remove()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f'[BeamNGWorld] WARNING: wide cam remove FAILED ({exc}) — '
+                          f'old camera may still be rendering!', flush=True)
                 self.camera_wide = _Camera('wide_cam', self.bng, self.vehicle,
                                            field_of_view_y=self._wide_fov, **_cam_kwargs)
                 print(f'[BeamNGWorld] Wide cam FOV → {self._wide_fov:.1f}°', flush=True)
