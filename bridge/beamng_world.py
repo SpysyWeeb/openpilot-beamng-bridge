@@ -76,6 +76,8 @@ class BeamNGWorld(World):
         # Initialised from beamng_setup constants on first use.
         self._road_fov = None
         self._wide_fov = None
+        # Camera mount override (y forward-negative, z up) — set_camera_pos().
+        self._cam_pos_override = None
         # Protects camera object replacement against concurrent _camera_loop reads.
         self._cam_lock = threading.Lock()
 
@@ -438,12 +440,24 @@ class BeamNGWorld(World):
             threading.Thread(target=self._rebuild_cameras, daemon=True,
                              name='cam_fov_rebuild').start()
 
+    def set_camera_pos(self, pos_y: float, pos_z: float) -> None:
+        """Move both camera mounts (x stays centered). Used to tune the mount
+        so the wide cam sees road instead of dashboard."""
+        if self._road_fov is None:
+            from linux.beamng_setup import CAM_FOV, CAM_WIDE_FOV
+            self._road_fov = CAM_FOV
+            self._wide_fov = CAM_WIDE_FOV
+        self._cam_pos_override = (0.0, pos_y, pos_z)
+        print(f'[BeamNGWorld] camera mount → y={pos_y:.2f} z={pos_z:.2f}', flush=True)
+        threading.Thread(target=self._rebuild_cameras, daemon=True,
+                         name='cam_pos_rebuild').start()
+
     def _rebuild_cameras(self) -> None:
         """Remove and re-create camera sensor(s) with updated FOV values."""
         from beamngpy.sensors import Camera as _Camera
         from linux.beamng_setup import CAM_POS, CAM_DIR, CAM_UP
         _cam_kwargs = dict(
-            pos=CAM_POS, dir=CAM_DIR, up=CAM_UP,
+            pos=self._cam_pos_override or CAM_POS, dir=CAM_DIR, up=CAM_UP,
             resolution=(CAM_RENDER_W, CAM_RENDER_H),
             near_far_planes=(0.1, 1500.0),
             is_render_annotations=False, is_render_depth=False,

@@ -168,6 +168,12 @@ class BeamNGBridge(SimulatorBridge):
                                 self.world.set_camera_fov(wide_fov=new_fov)
                         except (ValueError, AttributeError):
                             pass
+                    elif m[0] == "campos" and len(m) >= 3:
+                        # campos_<y>_<z>: move camera mount (tuning aid)
+                        try:
+                            self.world.set_camera_pos(float(m[1]), float(m[2]))
+                        except (ValueError, AttributeError):
+                            pass
                     elif m[0] == "reset":
                         self.world.reset()
                     elif m[0] == "quit":
