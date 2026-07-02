@@ -101,10 +101,14 @@ class BeamNGBridge(SimulatorBridge):
         # Local state — kept here rather than on self so common.py stays unmodified.
         pending_reengage   = False
         _controls_active   = False   # whether we drove BeamNG last frame
-        # Auto-press cruise MAIN shortly after start: a real car drives with ACC
-        # main on, and the UI hides its entire HUD until then (hud_renderer
-        # gates on set_speed != -1). Pulse a few frames once CAN has warmed up.
-        _auto_main_frames  = 8
+        # Auto-press cruise MAIN once openpilot is actually up: a real car
+        # drives with ACC main on, and the UI hides its entire HUD until then
+        # (hud_renderer gates on set_speed != -1). Trigger on selfdriveState
+        # going alive — the bridge runs long before openpilot launches, so a
+        # bridge-relative timer fires into a void.
+        _auto_main_frames  = 0
+        _auto_main_delay   = -1   # countdown after openpilot first seen alive
+        _op_seen           = False
         _last_watchdog     = time.monotonic()
         _driver_mode       = False   # Option B: stop sending controls, let player drive in BeamNG
         _pending_spd_presses = 0     # remaining cruise button presses for cruise_speed_X
@@ -221,8 +225,15 @@ class BeamNGBridge(SimulatorBridge):
                 _pending_spd_presses -= 1
 
             # ── Auto cruise-MAIN pulse (see note at declaration) ──────────────
-            if _auto_main_frames > 0 and self.rk.frame > 150 \
-                    and self.simulator_state.cruise_button == 0:
+            if not _op_seen and self.simulated_car.sm.alive['selfdriveState']:
+                _op_seen = True
+                _auto_main_delay = 300   # ~3 s after openpilot appears
+            if _auto_main_delay > 0:
+                _auto_main_delay -= 1
+                if _auto_main_delay == 0:
+                    _auto_main_frames = 8
+                    print('[BRG] auto-pressing cruise MAIN (HUD unlock)', flush=True)
+            if _auto_main_frames > 0 and self.simulator_state.cruise_button == 0:
                 self.simulator_state.cruise_button = CruiseButtons.MAIN
                 _auto_main_frames -= 1
 
